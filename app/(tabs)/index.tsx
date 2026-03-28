@@ -1,98 +1,212 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import React, { useState } from 'react';
+import { StyleSheet, Text, View, Button, FlatList, TouchableOpacity, TextInput, PermissionsAndroid, Platform } from 'react-native';
+import { BleManager, Device } from 'react-native-ble-plx';
+import base64 from 'react-native-base64';
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+// 1. Inicializamos el Manager fuera del componente para que no se reinicie
+const bleManager = new BleManager();
+
+// 2. UUIDs mágicos: Deben ser EXACTAMENTE los mismos en el código de Arduino (ESP32)
+const ESP32_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+const ESP32_CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 
 export default function HomeScreen() {
-  return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+  const [isScanning, setIsScanning] = useState(false);
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
+  
+  // Estados para los mensajes
+  const [messageToSend, setMessageToSend] = useState('');
+  const [receivedMessages, setReceivedMessages] = useState<string[]>([]);
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+  // 3. Pedir permisos (Android es estricto con esto)
+  const requestPermissions = async () => {
+    if (Platform.OS === 'android') {
+      if (Platform.Version >= 31) { // Android 12+
+        const result = await PermissionsAndroid.requestMultiple([
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        ]);
+        return result['android.permission.BLUETOOTH_CONNECT'] === PermissionsAndroid.RESULTS.GRANTED;
+      } else { // Android 11 o menor
+        const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
+        return granted === PermissionsAndroid.RESULTS.GRANTED;
+      }
+    }
+    return true; // iOS ya lo maneja con el app.json
+  };
+
+  // 4. Iniciar Escaneo
+  const startScan = async () => {
+    const hasPermission = await requestPermissions();
+    if (!hasPermission) {
+      console.warn("Permisos denegados");
+      return;
+    }
+
+    setDevices([]); // Limpiamos la lista anterior
+    setIsScanning(true);
+
+    bleManager.startDeviceScan(null, null, (error, device) => {
+      if (error) {
+        console.warn(error);
+        setIsScanning(false);
+        return;
+      }
+
+      // Filtramos para solo guardar dispositivos que tengan nombre y no duplicarlos
+      if (device && device.name) {
+        setDevices(prevDevices => {
+          if (!prevDevices.find(d => d.id === device.id)) {
+            return [...prevDevices, device];
+          }
+          return prevDevices;
+        });
+      }
+    });
+
+    // Detener el escaneo automáticamente después de 10 segundos
+    setTimeout(() => {
+      bleManager.stopDeviceScan();
+      setIsScanning(false);
+    }, 10000);
+  };
+
+  // 5. Conectar al ESP32
+  const connectToDevice = async (device: Device) => {
+    try {
+      setIsScanning(false);
+      bleManager.stopDeviceScan(); // Siempre detener escaneo antes de conectar
+      
+      console.log(`Conectando a ${device.name}...`);
+      const connected = await bleManager.connectToDevice(device.id);
+      
+      // Descubrir los servicios es OBLIGATORIO antes de enviar/recibir datos
+      await connected.discoverAllServicesAndCharacteristics();
+      setConnectedDevice(connected);
+      console.log("¡Conectado y servicios descubiertos!");
+
+      // Iniciar la escucha de mensajes del ESP32
+      startListeningToESP32(connected);
+
+    } catch (error) {
+      console.error("Error al conectar:", error);
+    }
+  };
+
+  // 6. Desconectar
+  const disconnectDevice = async () => {
+    if (connectedDevice) {
+      await bleManager.cancelDeviceConnection(connectedDevice.id);
+      setConnectedDevice(null);
+      setReceivedMessages([]);
+    }
+  };
+
+  // 7. Recibir Mensajes (Suscribirse a notificaciones)
+  const startListeningToESP32 = (device: Device) => {
+    device.monitorCharacteristicForService(
+      ESP32_SERVICE_UUID,
+      ESP32_CHARACTERISTIC_UUID,
+      (error, characteristic) => {
+        if (error) {
+          console.error("Error al recibir datos:", error);
+          return;
+        }
+        if (characteristic?.value) {
+          // Decodificamos el Base64 a texto normal
+          const decodedMessage = base64.decode(characteristic.value);
+          setReceivedMessages(prev => [...prev, `ESP32: ${decodedMessage}`]);
+        }
+      }
+    );
+  };
+
+  // 8. Enviar Mensaje al ESP32
+  const sendMessageToESP32 = async () => {
+    if (!connectedDevice || !messageToSend) return;
+
+    try {
+      // Codificamos el texto a Base64 antes de enviarlo
+      const base64Message = base64.encode(messageToSend);
+      
+      await connectedDevice.writeCharacteristicWithResponseForService(
+        ESP32_SERVICE_UUID,
+        ESP32_CHARACTERISTIC_UUID,
+        base64Message
+      );
+      
+      setReceivedMessages(prev => [...prev, `Yo: ${messageToSend}`]);
+      setMessageToSend(''); // Limpiar el input
+    } catch (error) {
+      console.error("Error enviando mensaje:", error);
+    }
+  };
+
+  // --- RENDERIZADO DE LA INTERFAZ ---
+
+  // Si estamos conectados, mostramos la pantalla de Chat
+  if (connectedDevice) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.title}>Conectado a: {connectedDevice.name}</Text>
+        <Button title="Desconectar" color="red" onPress={disconnectDevice} />
+        
+        <View style={styles.chatBox}>
+          <FlatList
+            data={receivedMessages}
+            keyExtractor={(item, index) => index.toString()}
+            renderItem={({ item }) => <Text style={styles.messageText}>{item}</Text>}
+          />
+        </View>
+
+        <View style={styles.inputContainer}>
+          <TextInput
+            style={styles.input}
+            placeholder="Escribe un comando..."
+            value={messageToSend}
+            onChangeText={setMessageToSend}
+          />
+          <Button title="Enviar" onPress={sendMessageToESP32} />
+        </View>
+      </View>
+    );
+  }
+
+  // Si NO estamos conectados, mostramos la pantalla de Escaneo
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Buscador de ESP32</Text>
+      <Button 
+        title={isScanning ? "Buscando..." : "Buscar Dispositivos"} 
+        onPress={startScan} 
+        disabled={isScanning} 
+      />
+      
+      <FlatList
+        data={devices}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => (
+          <TouchableOpacity style={styles.deviceButton} onPress={() => connectToDevice(item)}>
+            <Text style={styles.deviceName}>{item.name}</Text>
+            <Text style={styles.deviceId}>{item.id}</Text>
+          </TouchableOpacity>
+        )}
+      />
+    </View>
   );
 }
 
+// Estilos básicos
 const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
-  },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
-  },
+  container: { flex: 1, padding: 20, marginTop: 40, backgroundColor: '#f5f5f5' },
+  title: { fontSize: 24, fontWeight: 'bold', marginBottom: 20, textAlign: 'center', color: '#333' },
+  deviceButton: { backgroundColor: '#fff', padding: 15, marginVertical: 8, borderRadius: 10, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 5, elevation: 3 },
+  deviceName: { fontSize: 18, fontWeight: 'bold', color: '#333' },
+  deviceId: { fontSize: 12, color: '#666', marginTop: 5 },
+  chatBox: { flex: 1, backgroundColor: '#fff', marginTop: 20, marginBottom: 20, padding: 10, borderRadius: 10, borderWidth: 1, borderColor: '#ddd' },
+  messageText: { fontSize: 16, marginVertical: 5, color: '#444' },
+  inputContainer: { flexDirection: 'row', alignItems: 'center' },
+  input: { flex: 1, borderWidth: 1, borderColor: '#ccc', padding: 10, borderRadius: 10, marginRight: 10, backgroundColor: '#fff', color: '#000' }
 });
