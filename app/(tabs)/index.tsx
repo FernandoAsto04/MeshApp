@@ -1,10 +1,15 @@
+import Constants from 'expo-constants';
 import React, { useState } from 'react';
-import { StyleSheet, Text, View, Button, FlatList, TouchableOpacity, TextInput, PermissionsAndroid, Platform } from 'react-native';
-import { BleManager, Device } from 'react-native-ble-plx';
+import { Button, FlatList, PermissionsAndroid, Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import base64 from 'react-native-base64';
+import { BleManager, Device } from 'react-native-ble-plx';
+import { styles } from './Styles/index';
 
-// 1. Inicializamos el Manager fuera del componente para que no se reinicie
-const bleManager = new BleManager();
+// 1. Inicializamos el Manager AVISÁNDOLE a TypeScript de qué tipo es
+let bleManager: BleManager | null = null; // <-- ESTE ES EL GRAN CAMBIO
+if (Platform.OS !== 'web' && Constants.appOwnership !== 'expo') {
+  bleManager = new BleManager();
+}
 
 // 2. UUIDs mágicos: Deben ser EXACTAMENTE los mismos en el código de Arduino (ESP32)
 const ESP32_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
@@ -39,23 +44,30 @@ export default function HomeScreen() {
 
   // 4. Iniciar Escaneo
   const startScan = async () => {
+    if (Platform.OS === 'web' || Constants.appOwnership === 'expo') {
+      alert("El escaneo Bluetooth está desactivado en la Web y en Expo Go para evitar errores. ¡Usa tu app nativa en el celular para probar esto!");
+      return;
+    }
+
+    if (!bleManager) return; 
+
     const hasPermission = await requestPermissions();
     if (!hasPermission) {
       console.warn("Permisos denegados");
       return;
     }
 
-    setDevices([]); // Limpiamos la lista anterior
+    setDevices([]); 
     setIsScanning(true);
 
-    bleManager.startDeviceScan(null, null, (error, device) => {
+    // <-- Le agregamos el signo de interrogación aquí también
+    bleManager?.startDeviceScan(null, null, (error, device) => {
       if (error) {
         console.warn(error);
         setIsScanning(false);
         return;
       }
 
-      // Filtramos para solo guardar dispositivos que tengan nombre y no duplicarlos
       if (device && device.name) {
         setDevices(prevDevices => {
           if (!prevDevices.find(d => d.id === device.id)) {
@@ -66,9 +78,8 @@ export default function HomeScreen() {
       }
     });
 
-    // Detener el escaneo automáticamente después de 10 segundos
     setTimeout(() => {
-      bleManager.stopDeviceScan();
+      bleManager?.stopDeviceScan();
       setIsScanning(false);
     }, 10000);
   };
@@ -77,18 +88,18 @@ export default function HomeScreen() {
   const connectToDevice = async (device: Device) => {
     try {
       setIsScanning(false);
-      bleManager.stopDeviceScan(); // Siempre detener escaneo antes de conectar
+      bleManager?.stopDeviceScan(); 
       
       console.log(`Conectando a ${device.name}...`);
-      const connected = await bleManager.connectToDevice(device.id);
+      const connected = await bleManager?.connectToDevice(device.id);
       
-      // Descubrir los servicios es OBLIGATORIO antes de enviar/recibir datos
-      await connected.discoverAllServicesAndCharacteristics();
-      setConnectedDevice(connected);
-      console.log("¡Conectado y servicios descubiertos!");
+      if (connected) {
+        await connected.discoverAllServicesAndCharacteristics();
+        setConnectedDevice(connected);
+        console.log("¡Conectado y servicios descubiertos!");
 
-      // Iniciar la escucha de mensajes del ESP32
-      startListeningToESP32(connected);
+        startListeningToESP32(connected);
+      }
 
     } catch (error) {
       console.error("Error al conectar:", error);
@@ -98,7 +109,7 @@ export default function HomeScreen() {
   // 6. Desconectar
   const disconnectDevice = async () => {
     if (connectedDevice) {
-      await bleManager.cancelDeviceConnection(connectedDevice.id);
+      await bleManager?.cancelDeviceConnection(connectedDevice.id);
       setConnectedDevice(null);
       setReceivedMessages([]);
     }
@@ -115,7 +126,6 @@ export default function HomeScreen() {
           return;
         }
         if (characteristic?.value) {
-          // Decodificamos el Base64 a texto normal
           const decodedMessage = base64.decode(characteristic.value);
           setReceivedMessages(prev => [...prev, `ESP32: ${decodedMessage}`]);
         }
@@ -128,7 +138,6 @@ export default function HomeScreen() {
     if (!connectedDevice || !messageToSend) return;
 
     try {
-      // Codificamos el texto a Base64 antes de enviarlo
       const base64Message = base64.encode(messageToSend);
       
       await connectedDevice.writeCharacteristicWithResponseForService(
@@ -138,15 +147,13 @@ export default function HomeScreen() {
       );
       
       setReceivedMessages(prev => [...prev, `Yo: ${messageToSend}`]);
-      setMessageToSend(''); // Limpiar el input
+      setMessageToSend(''); 
     } catch (error) {
       console.error("Error enviando mensaje:", error);
     }
   };
 
   // --- RENDERIZADO DE LA INTERFAZ ---
-
-  // Si estamos conectados, mostramos la pantalla de Chat
   if (connectedDevice) {
     return (
       <View style={styles.container}>
@@ -174,7 +181,6 @@ export default function HomeScreen() {
     );
   }
 
-  // Si NO estamos conectados, mostramos la pantalla de Escaneo
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Buscador de ESP32</Text>
@@ -197,16 +203,3 @@ export default function HomeScreen() {
     </View>
   );
 }
-
-// Estilos básicos
-const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, marginTop: 40, backgroundColor: '#f5f5f5' },
-  title: { fontSize: 24, fontWeight: 'bold', marginBottom: 20, textAlign: 'center', color: '#333' },
-  deviceButton: { backgroundColor: '#fff', padding: 15, marginVertical: 8, borderRadius: 10, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 5, elevation: 3 },
-  deviceName: { fontSize: 18, fontWeight: 'bold', color: '#333' },
-  deviceId: { fontSize: 12, color: '#666', marginTop: 5 },
-  chatBox: { flex: 1, backgroundColor: '#fff', marginTop: 20, marginBottom: 20, padding: 10, borderRadius: 10, borderWidth: 1, borderColor: '#ddd' },
-  messageText: { fontSize: 16, marginVertical: 5, color: '#444' },
-  inputContainer: { flexDirection: 'row', alignItems: 'center' },
-  input: { flex: 1, borderWidth: 1, borderColor: '#ccc', padding: 10, borderRadius: 10, marginRight: 10, backgroundColor: '#fff', color: '#000' }
-});
