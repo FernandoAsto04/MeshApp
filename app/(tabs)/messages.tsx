@@ -1,7 +1,7 @@
 import { useBluetooth } from '@/context/BluetoothContext';
 import React from 'react';
 import { FlatList, Text, View } from 'react-native';
-import { styleMessage } from './Styles/messages';
+import { styleMessage } from '../../Styles/messages';
 
 export default function MessagesScreen() {
   const { receivedMessages } = useBluetooth();

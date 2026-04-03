@@ -55,7 +55,8 @@
           ],
           "bluetoothAlwaysPermission": "Permite que la app se conecte al ESP32"
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true,
