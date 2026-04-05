@@ -1,22 +1,19 @@
 import React, { useState } from 'react';
-import { Button, FlatList, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Button, FlatList, Text, TouchableOpacity, View } from 'react-native';
 import base64 from 'react-native-base64';
+// 1. Importamos SecureStore para poder leer el mensaje guardado
+import * as SecureStore from 'expo-secure-store';
 
-// 1. Importaciones del Contexto y Librería Bluetooth
 import { bleManager, useBluetooth } from '@/context/BluetoothContext';
 import { Device } from 'react-native-ble-plx';
-
-// Importamos los estilos desde tu archivo separado
 import { styles } from '../../Styles/index';
 
 export default function HomeScreen() {
   const [isScanning, setIsScanning] = useState(false);
   const [devices, setDevices] = useState<Device[]>([]); 
 
-  // 2. Usamos el Contexto Global
   const { connectedDevice, setConnectedDevice, addMessage } = useBluetooth();
 
-  // Función para escanear dispositivos ESP32
   const startScan = async () => {
     if (!bleManager) return;
     setDevices([]);
@@ -29,7 +26,6 @@ export default function HomeScreen() {
         return;
       }
       
-      // Filtramos para evitar duplicados
       if (device && device.name) {
         setDevices(prev => {
           if (!prev.find(d => d.id === device.id)) return [...prev, device];
@@ -38,14 +34,12 @@ export default function HomeScreen() {
       }
     });
 
-    // Detener el escaneo tras 10 segundos
     setTimeout(() => {
       bleManager?.stopDeviceScan();
       setIsScanning(false);
     }, 10000);
   };
 
-  // Función para conectar al dispositivo
   const connectToDevice = async (device: Device) => {
     try {
       setIsScanning(false);
@@ -59,7 +53,6 @@ export default function HomeScreen() {
         setConnectedDevice(connected as Device);
         console.log("¡Conexión exitosa!");
 
-        // Escuchar mensajes del ESP32
         connected.monitorCharacteristicForService(
           "4fafc201-1fb5-459e-8fcc-c5c9c331914b",
           "beb5483e-36e1-4688-b7f5-ea07361b26a8",
@@ -80,27 +73,37 @@ export default function HomeScreen() {
     }
   };
 
-  // 3. NUEVA FUNCIÓN: Enviar mensaje al ESP32
+  // 2. FUNCIÓN ACTUALIZADA: Lee el SecureStore y envía ese texto
   const enviarMensajeAlESP32 = async () => {
     if (!connectedDevice) {
-      console.log("No hay dispositivo conectado");
+      Alert.alert("Error", "No hay dispositivo conectado.");
       return;
     }
 
     try {
-      // Preparamos el mensaje y lo codificamos
-      const mensaje = "Hola desde React Native!";
-      const mensajeBase64 = base64.encode(mensaje);
+      // Recuperamos el mensaje que guardaste en la pantalla de configuración
+      const mensajeGuardado = await SecureStore.getItemAsync('user_mensaje');
+
+      // Validamos si existe o si está vacío
+      if (!mensajeGuardado || mensajeGuardado.trim() === '') {
+        Alert.alert('Aviso', 'No has configurado un "Mensaje Rápido" en los ajustes.');
+        return;
+      }
+
+      // Codificamos el mensaje recuperado
+      const mensajeBase64 = base64.encode(mensajeGuardado);
 
       // Enviamos el mensaje al ESP32
       await connectedDevice.writeCharacteristicWithResponseForService(
-        "4fafc201-1fb5-459e-8fcc-c5c9c331914b", // UUID del Servicio
-        "beb5483e-36e1-4688-b7f5-ea07361b26a8", // UUID de la Característica
+        "4fafc201-1fb5-459e-8fcc-c5c9c331914b", 
+        "beb5483e-36e1-4688-b7f5-ea07361b26a8", 
         mensajeBase64
       );
       
-      console.log("Mensaje enviado con éxito");
+      Alert.alert("¡Enviado!", `Mensaje enviado: "${mensajeGuardado}"`);
+      console.log("Mensaje enviado con éxito:", mensajeGuardado);
     } catch (error) {
+      Alert.alert("Error", "Hubo un problema al enviar el mensaje.");
       console.error("Error enviando el mensaje:", error);
     }
   };
@@ -113,7 +116,6 @@ export default function HomeScreen() {
 
       {!connectedDevice ? (
         <>
-          {/* Interfaz de búsqueda */}
           <Button 
             title={isScanning ? "Buscando..." : "Buscar Dispositivos"} 
             onPress={startScan} 
@@ -132,22 +134,19 @@ export default function HomeScreen() {
           />
         </>
       ) : (
-        // Interfaz cuando ya hay conexión activa
         <View style={{ marginTop: 20 }}>
           <Text style={{ textAlign: 'center', marginBottom: 20, fontSize: 16, color: '#666' }}>
             ¡Conexión establecida!{"\n"}Ve a la pestaña de Mensajes para ver la actividad.
           </Text>
 
-          {/* NUEVO BOTÓN: Aparece al conectarse */}
           <View style={{ marginBottom: 15 }}>
             <Button 
-              title="ENVIAR MENSAJE AL ESP32" 
+              title="ENVIAR MENSAJE RÁPIDO" 
               color="#28a745" 
               onPress={enviarMensajeAlESP32} 
             />
           </View>
 
-          {/* Botón de desconectar */}
           <Button 
             title="Desconectar" 
             color="red" 

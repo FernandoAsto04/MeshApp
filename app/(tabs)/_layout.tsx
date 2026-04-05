@@ -24,17 +24,17 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="config"
-        options={{
-          title: 'Configuración',
-          tabBarIcon: ({ color }) => <MaterialIcons size={28} name="settings" color={color} />,
-        }}
-      />
-      <Tabs.Screen
         name="messages"
         options={{
           title: 'Mensajes',
           tabBarIcon: ({ color }) => <MaterialIcons size={28} name="message" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="config"
+        options={{
+          title: 'Configuración',
+          tabBarIcon: ({ color }) => <MaterialIcons size={28} name="settings" color={color} />,
         }}
       />
       <Tabs.Screen

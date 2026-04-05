@@ -1,47 +1,54 @@
-import React, { useEffect, useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
-// 1. Importamos SecureStore en lugar de AsyncStorage
 import * as SecureStore from 'expo-secure-store';
+import React, { useEffect, useState } from 'react';
+import { Alert, KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { styleConfig } from '../../Styles/config';
 
 export default function ConfigScreen() {
-  const [userName, setUserName] = useState('Usuario Destacado');
-  const [newName, setNewName] = useState('');
+  // 1. Creamos los estados para todos los campos
+  const [nombre, setNombre] = useState('');
+  const [dni, setDni] = useState('');
+  const [celular, setCelular] = useState('');
+  const [mensaje, setMensaje] = useState('');
 
-  // 2. Efecto para cargar el nombre guardado usando SecureStore
+  // 2. Efecto para cargar TODOS los datos guardados al abrir la pantalla
   useEffect(() => {
-    const loadSavedName = async () => {
+    const loadSavedData = async () => {
       try {
-        // Usamos getItemAsync y una llave sin el '@' por compatibilidad
         const savedName = await SecureStore.getItemAsync('user_name');
-        if (savedName !== null) {
-          setUserName(savedName);
-        }
+        const savedDni = await SecureStore.getItemAsync('user_dni');
+        const savedCelular = await SecureStore.getItemAsync('user_celular');
+        const savedMensaje = await SecureStore.getItemAsync('user_mensaje');
+
+        if (savedName) setNombre(savedName);
+        if (savedDni) setDni(savedDni);
+        if (savedCelular) setCelular(savedCelular);
+        if (savedMensaje) setMensaje(savedMensaje);
       } catch (error) {
-        console.error('Error al cargar el nombre de usuario:', error);
+        console.error('Error al cargar los datos:', error);
       }
     };
 
-    loadSavedName();
+    loadSavedData();
   }, []);
 
-  // 3. Función asíncrona para guardar con SecureStore
-  const handleSaveName = async () => {
-    if (newName.trim() === '') {
+  // 3. Función unificada para guardar todos los campos a la vez
+  const handleSaveAll = async () => {
+    if (nombre.trim() === '') {
       Alert.alert('Ojo', 'El nombre no puede estar vacío.');
       return;
     }
 
     try {
-      // Usamos setItemAsync para guardar el dato encriptado
-      await SecureStore.setItemAsync('user_name', newName);
+      // Guardamos cada campo con su propia llave en el almacenamiento seguro
+      await SecureStore.setItemAsync('user_name', nombre);
+      await SecureStore.setItemAsync('user_dni', dni);
+      await SecureStore.setItemAsync('user_celular', celular);
+      await SecureStore.setItemAsync('user_mensaje', mensaje);
       
-      setUserName(newName);
-      setNewName('');
-      Alert.alert('¡Éxito!', 'Tu nombre de usuario ha sido guardado permanentemente.');
+      Alert.alert('¡Éxito!', 'Tus datos han sido guardados permanentemente.');
     } catch (error) {
-      Alert.alert('Error', 'Hubo un problema al guardar tu nombre.');
-      console.error('Error al guardar el nombre:', error);
+      Alert.alert('Error', 'Hubo un problema al guardar tus datos.');
+      console.error('Error al guardar:', error);
     }
   };
 
@@ -50,29 +57,69 @@ export default function ConfigScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styleConfig.container}
     >
-      <Text style={styleConfig.headerTitle}>Ajustes del Sistema</Text>
+      {/* ScrollView permite deslizar la pantalla si el teclado tapa los campos de abajo */}
+      <ScrollView showsVerticalScrollIndicator={false}>
+        <Text style={styleConfig.headerTitle}>Ajustes del Sistema</Text>
 
-      <View style={styleConfig.card}>
-        <Text style={styleConfig.sectionTitle}>Perfil de Usuario</Text>
+        {/* PRIMER CUADRO: Datos Personales (Nombre, DNI, Celular) */}
+        <View style={styleConfig.card}>
+          <Text style={styleConfig.sectionTitle}>Perfil de Usuario</Text>
+
+          <Text style={styleConfig.label}>Nombre:</Text>
+          <TextInput
+            style={styleConfig.input}
+            placeholder="Escribe tu nombre..."
+            placeholderTextColor="#999"
+            value={nombre}
+            onChangeText={setNombre}
+            maxLength={30}
+          />
+
+          <Text style={styleConfig.label}>DNI:</Text>
+          <TextInput
+            style={styleConfig.input}
+            placeholder="Ej: 12345678"
+            placeholderTextColor="#999"
+            value={dni}
+            onChangeText={setDni}
+            keyboardType="numeric" // Fuerza el teclado numérico
+            maxLength={8}
+          />
+
+          <Text style={styleConfig.label}>Celular:</Text>
+          <TextInput
+            style={styleConfig.input}
+            placeholder="Ej: 987654321"
+            placeholderTextColor="#999"
+            value={celular}
+            onChangeText={setCelular}
+            keyboardType="numeric" // Fuerza el teclado numérico
+            maxLength={9}
+          />
+        </View>
         
-        <Text style={styleConfig.label}>Nombre actual:</Text>
-        <Text style={styleConfig.currentName}>{userName}</Text>
+        {/* SEGUNDO CUADRO: Mensaje Rápido */}
+        <View style={styleConfig.card}>
+          <Text style={styleConfig.sectionTitle}>Configuración Adicional</Text>
 
-        <Text style={styleConfig.label}>Cambiar nombre:</Text>
-        <TextInput
-          style={styleConfig.input}
-          placeholder="Escribe tu nuevo nombre..."
-          placeholderTextColor="#999"
-          value={newName}
-          onChangeText={setNewName}
-          maxLength={20}
-        />
+          <Text style={styleConfig.label}>Mensaje Rápido:</Text>
+          <TextInput
+            style={styleConfig.input}
+            placeholder="Ej: Necesito ayuda urgente..."
+            placeholderTextColor="#999"
+            value={mensaje}
+            onChangeText={setMensaje}
+            maxLength={100}
+            multiline={true} // Permite que el texto baje a una segunda línea si es largo
+          />
+        </View>
 
-        <TouchableOpacity style={styleConfig.saveButton} onPress={handleSaveName}>
-          <Text style={styleConfig.saveButtonText}>Guardar Cambios</Text>
+        {/* BOTÓN DE GUARDADO: Lo sacamos de los cuadros para que guarde todo de un golpe */}
+        <TouchableOpacity style={styleConfig.saveButton} onPress={handleSaveAll}>
+          <Text style={styleConfig.saveButtonText}>Guardar Todos los Cambios</Text>
         </TouchableOpacity>
-      </View>
-      
+
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
