@@ -1,8 +1,7 @@
-import React, { useState } from 'react';
-import { Alert, Button, FlatList, Text, TouchableOpacity, View } from 'react-native';
-import base64 from 'react-native-base64';
-// 1. Importamos SecureStore para poder leer el mensaje guardado
 import * as SecureStore from 'expo-secure-store';
+import React, { useState } from 'react';
+import { Alert, Button, FlatList, Platform, Text, TouchableOpacity, View } from 'react-native';
+import base64 from 'react-native-base64';
 
 import { bleManager, useBluetooth } from '@/context/BluetoothContext';
 import { Device } from 'react-native-ble-plx';
@@ -49,20 +48,49 @@ export default function HomeScreen() {
       
       if (connected) {
         await connected.discoverAllServicesAndCharacteristics();
+        
+        // --- CAMBIO 1: SOLICITAR MTU (Evita el error al enviar) ---
+        if (Platform.OS === 'android') {
+          try {
+            await connected.requestMTU(512);
+            console.log("MTU ampliado a 512 bytes.");
+          } catch (mtuError) {
+            console.log("No se pudo ampliar MTU:", mtuError);
+          }
+        }
+
         setConnectedDevice(connected as Device);
         console.log("¡Conexión exitosa!");
 
+        // --- CAMBIO 2: LÓGICA DE RECEPCIÓN (Buffer para unir pedazos) ---
+        let mensajeEnPartes = ""; 
+
         connected.monitorCharacteristicForService(
           "4fafc201-1fb5-459e-8fcc-c5c9c331914b",
-          "beb5483e-36e1-4688-b7f5-ea07361b26a8",
+          "beb5483e-36e1-4688-b7f5-ea07361b26a9", // <-- UUID RX TERMINADO EN 9
           (error, characteristic) => {
             if (error) {
               console.error("Error en el monitoreo:", error);
               return;
             }
             if (characteristic?.value) {
-              const decoded = base64.decode(characteristic.value);
-              addMessage(device.name || "ESP32", decoded);
+              const trozo = base64.decode(characteristic.value);
+              mensajeEnPartes += trozo;
+
+              try {
+                // Intentamos parsear. Si falla, es que el mensaje aún no llega completo.
+                const datosCompletos = JSON.parse(mensajeEnPartes);
+
+                if (datosCompletos.type === "message") {
+                  addMessage(datosCompletos.from || "Mesh", datosCompletos.text);
+                }
+                
+                // Si el parseo fue exitoso, limpiamos para el siguiente mensaje
+                mensajeEnPartes = "";
+
+              } catch (e) {
+                // El JSON sigue incompleto, esperamos el siguiente pedazo
+              }
             }
           }
         );
@@ -72,7 +100,6 @@ export default function HomeScreen() {
     }
   };
 
-  // 2. FUNCIÓN ACTUALIZADA: Lee el SecureStore, arma el JSON y envía
   const enviarMensajeAlESP32 = async () => {
     if (!connectedDevice) {
       Alert.alert("Error", "No hay dispositivo conectado.");
@@ -80,17 +107,14 @@ export default function HomeScreen() {
     }
 
     try {
-      // Recuperamos el mensaje que guardaste en la pantalla de configuración
       const mensajeGuardado = await SecureStore.getItemAsync('user_mensaje');
 
-      // Validamos si existe o si está vacío
       if (!mensajeGuardado || mensajeGuardado.trim() === '') {
-        Alert.alert('Aviso', 'No has configurado un "Mensaje Rápido" en los ajustes.');
+        Alert.alert('Aviso', 'Configura un mensaje en ajustes.');
         return;
       }
 
-      // --- SOLUCIÓN APLICADA AQUÍ ---
-      // 1. Armamos el objeto JSON exacto que espera recibir tu ESP32
+      // --- CAMBIO 3: ENVIAR COMO JSON (Estructura Mesh) ---
       const payload = {
         cmd: "send",
         text: mensajeGuardado,
@@ -98,29 +122,21 @@ export default function HomeScreen() {
         sos: false
       };
 
-      // 2. Convertimos el objeto JSON a una cadena de texto
       const jsonString = JSON.stringify(payload);
-
-      // 3. Codificamos esa cadena de texto a Base64
       const mensajeBase64 = base64.encode(jsonString);
-      // ------------------------------
 
-      // Enviamos el mensaje al ESP32
       await connectedDevice.writeCharacteristicWithResponseForService(
         "4fafc201-1fb5-459e-8fcc-c5c9c331914b", 
-        "beb5483e-36e1-4688-b7f5-ea07361b26a8", 
+        "beb5483e-36e1-4688-b7f5-ea07361b26a8", // <-- UUID TX SE QUEDA EN 8
         mensajeBase64
       );
       
-      Alert.alert("¡Enviado!", `Mensaje enviado a la Mesh: "${mensajeGuardado}"`);
-      console.log("JSON enviado con éxito:", jsonString);
-      
-      // Añadimos el mensaje a nuestra propia pantalla de chats para verlo
+      Alert.alert("¡Enviado!", `Mensaje enviado: "${mensajeGuardado}"`);
       addMessage("Yo", mensajeGuardado);
 
     } catch (error) {
-      Alert.alert("Error", "Hubo un problema al enviar el mensaje.");
-      console.error("Error enviando el mensaje:", error);
+      Alert.alert("Error", "Error al enviar. Intenta reconectar.");
+      console.error("Error detallado:", error);
     }
   };
 
@@ -137,7 +153,6 @@ export default function HomeScreen() {
             onPress={startScan} 
             disabled={isScanning} 
           />
-          
           <FlatList
             data={devices}
             keyExtractor={(item) => item.id}
@@ -151,10 +166,6 @@ export default function HomeScreen() {
         </>
       ) : (
         <View style={{ marginTop: 20 }}>
-          <Text style={{ textAlign: 'center', marginBottom: 20, fontSize: 16, color: '#666' }}>
-            ¡Conexión establecida!{"\n"}Ve a la pestaña de Mensajes para ver la actividad.
-          </Text>
-
           <View style={{ marginBottom: 15 }}>
             <Button 
               title="ENVIAR MENSAJE RÁPIDO" 
@@ -162,7 +173,6 @@ export default function HomeScreen() {
               onPress={enviarMensajeAlESP32} 
             />
           </View>
-
           <Button 
             title="Desconectar" 
             color="red" 
