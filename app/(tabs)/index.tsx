@@ -11,7 +11,6 @@ import { styles } from '../../Styles/index';
 export default function HomeScreen() {
   const [isScanning, setIsScanning] = useState(false);
   const [devices, setDevices] = useState<Device[]>([]); 
-
   const { connectedDevice, setConnectedDevice, addMessage } = useBluetooth();
 
   const startScan = async () => {
@@ -73,7 +72,7 @@ export default function HomeScreen() {
     }
   };
 
-  // 2. FUNCIÓN ACTUALIZADA: Lee el SecureStore y envía ese texto
+  // 2. FUNCIÓN ACTUALIZADA: Lee el SecureStore, arma el JSON y envía
   const enviarMensajeAlESP32 = async () => {
     if (!connectedDevice) {
       Alert.alert("Error", "No hay dispositivo conectado.");
@@ -90,8 +89,21 @@ export default function HomeScreen() {
         return;
       }
 
-      // Codificamos el mensaje recuperado
-      const mensajeBase64 = base64.encode(mensajeGuardado);
+      // --- SOLUCIÓN APLICADA AQUÍ ---
+      // 1. Armamos el objeto JSON exacto que espera recibir tu ESP32
+      const payload = {
+        cmd: "send",
+        text: mensajeGuardado,
+        to: "broadcast", 
+        sos: false
+      };
+
+      // 2. Convertimos el objeto JSON a una cadena de texto
+      const jsonString = JSON.stringify(payload);
+
+      // 3. Codificamos esa cadena de texto a Base64
+      const mensajeBase64 = base64.encode(jsonString);
+      // ------------------------------
 
       // Enviamos el mensaje al ESP32
       await connectedDevice.writeCharacteristicWithResponseForService(
@@ -100,8 +112,12 @@ export default function HomeScreen() {
         mensajeBase64
       );
       
-      Alert.alert("¡Enviado!", `Mensaje enviado: "${mensajeGuardado}"`);
-      console.log("Mensaje enviado con éxito:", mensajeGuardado);
+      Alert.alert("¡Enviado!", `Mensaje enviado a la Mesh: "${mensajeGuardado}"`);
+      console.log("JSON enviado con éxito:", jsonString);
+      
+      // Añadimos el mensaje a nuestra propia pantalla de chats para verlo
+      addMessage("Yo", mensajeGuardado);
+
     } catch (error) {
       Alert.alert("Error", "Hubo un problema al enviar el mensaje.");
       console.error("Error enviando el mensaje:", error);
