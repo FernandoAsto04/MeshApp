@@ -101,7 +101,6 @@ export default function ConfigScreen() {
         {/* SEGUNDO CUADRO: Mensaje Rápido */}
         <View style={styleConfig.card}>
           <Text style={styleConfig.sectionTitle}>Configuración Adicional</Text>
-
           <Text style={styleConfig.label}>Mensaje Rápido:</Text>
           <TextInput
             style={styleConfig.input}
