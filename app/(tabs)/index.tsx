@@ -19,12 +19,13 @@ export default function HomeScreen() {
   const [isScanning, setIsScanning] = useState(false);
   const [devices, setDevices] = useState<Device[]>([]);
 
-  // Importamos setCurrentNodeName
+  // --- ACTUALIZADO: Importamos setNetworkNodes para guardar la topología de la malla ---
   const {
     connectedDevice,
     setConnectedDevice,
     addMessage,
     setCurrentNodeName,
+    setNetworkNodes,
   } = useBluetooth();
 
   const startScan = async () => {
@@ -72,7 +73,6 @@ export default function HomeScreen() {
         }
 
         setConnectedDevice(connected as Device);
-        // --- NUEVO: Guardamos el nombre inicial del nodo apenas nos conectamos ---
         setCurrentNodeName(connected.name || "Nodo Desconocido");
 
         let mensajeEnPartes = "";
@@ -90,23 +90,34 @@ export default function HomeScreen() {
               try {
                 const datosCompletos = JSON.parse(mensajeEnPartes);
 
+                // 1. Manejo de mensajes de texto entrantes
                 if (datosCompletos.type === "message") {
                   addMessage(
                     datosCompletos.from || "Mesh",
                     datosCompletos.text,
                   );
                 }
-                // --- NUEVO: Escuchamos cuando el ESP32 confirma que se cambió el nombre ---
+                // 2. Manejo de confirmación de cambio de nombre
                 else if (datosCompletos.type === "nameUpdated") {
-                  setCurrentNodeName(datosCompletos.nodeName); // Actualiza en vivo la app
+                  setCurrentNodeName(datosCompletos.nodeName);
                   Alert.alert(
                     "¡Nombre Actualizado!",
                     `El nodo ahora se llama: ${datosCompletos.nodeName}.\n\nNota: Puede que necesites reiniciar el ESP32 para que el nuevo nombre aparezca en el escáner Bluetooth.`,
                   );
                 }
+                // --- NUEVO: 3. Manejo de la estructura de la red Mesh (Topología) ---
+                else if (datosCompletos.type === "topology") {
+                  if (Array.isArray(datosCompletos.nodes)) {
+                    setNetworkNodes(datosCompletos.nodes);
+                  }
+                }
 
+                // Si se parseó correctamente un JSON válido, limpiamos el acumulador
                 mensajeEnPartes = "";
-              } catch (e) {}
+              } catch (e) {
+                // Si entra aquí es porque el JSON está incompleto (sigue llegando en partes)
+                // No limpiamos mensajeEnPartes para que se concatene con el siguiente fragmento
+              }
             }
           },
         );
