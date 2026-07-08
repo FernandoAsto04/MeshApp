@@ -19,13 +19,12 @@ export default function HomeScreen() {
   const [isScanning, setIsScanning] = useState(false);
   const [devices, setDevices] = useState<Device[]>([]);
 
-  // --- ACTUALIZADO: Importamos setNetworkNodes para guardar la topología de la malla ---
   const {
     connectedDevice,
     setConnectedDevice,
     addMessage,
     setCurrentNodeName,
-    setNetworkNodes,
+    setMeshNodes,
   } = useBluetooth();
 
   const startScan = async () => {
@@ -39,7 +38,6 @@ export default function HomeScreen() {
         setIsScanning(false);
         return;
       }
-
       if (device && device.name) {
         setDevices((prev) => {
           if (!prev.find((d) => d.id === device.id)) return [...prev, device];
@@ -75,52 +73,59 @@ export default function HomeScreen() {
         setConnectedDevice(connected as Device);
         setCurrentNodeName(connected.name || "Nodo Desconocido");
 
-        let mensajeEnPartes = "";
+        // --- CORRECCIÓN: Buffer para manejar chunks y salto de línea \n ---
+        let buffer = "";
 
         connected.monitorCharacteristicForService(
           "4fafc201-1fb5-459e-8fcc-c5c9c331914b",
           "beb5483e-36e1-4688-b7f5-ea07361b26a9",
           (error, characteristic) => {
-            if (error) return;
+            if (error || !characteristic?.value) return;
 
-            if (characteristic?.value) {
-              const trozo = base64.decode(characteristic.value);
-              mensajeEnPartes += trozo;
+            const trozo = base64.decode(characteristic.value);
+            buffer += trozo;
 
+            // Esperar hasta encontrar el salto de línea para parsear
+            if (buffer.includes("\n")) {
               try {
-                const datosCompletos = JSON.parse(mensajeEnPartes);
+                const jsonStr = buffer.trim();
+                const datosCompletos = JSON.parse(jsonStr);
 
-                // 1. Manejo de mensajes de texto entrantes
                 if (datosCompletos.type === "message") {
                   addMessage(
-                    datosCompletos.from || "Mesh",
+                    datosCompletos.fromName || datosCompletos.from || "Mesh",
                     datosCompletos.text,
                   );
-                }
-                // 2. Manejo de confirmación de cambio de nombre
-                else if (datosCompletos.type === "nameUpdated") {
+                } else if (datosCompletos.type === "nameUpdated") {
                   setCurrentNodeName(datosCompletos.nodeName);
                   Alert.alert(
-                    "¡Nombre Actualizado!",
-                    `El nodo ahora se llama: ${datosCompletos.nodeName}.\n\nNota: Puede que necesites reiniciar el ESP32 para que el nuevo nombre aparezca en el escáner Bluetooth.`,
+                    "¡Éxito!",
+                    `Nombre actualizado a: ${datosCompletos.nodeName}`,
                   );
-                }
-                // --- NUEVO: 3. Manejo de la estructura de la red Mesh (Topología) ---
-                else if (datosCompletos.type === "topology") {
-                  if (Array.isArray(datosCompletos.nodes)) {
-                    setNetworkNodes(datosCompletos.nodes);
-                  }
+                } else if (datosCompletos.type === "nodes") {
+                  setMeshNodes(datosCompletos.nodes); // Actualiza la lista para el selector
                 }
 
-                // Si se parseó correctamente un JSON válido, limpiamos el acumulador
-                mensajeEnPartes = "";
+                buffer = ""; // Limpiar buffer
               } catch (e) {
-                // Si entra aquí es porque el JSON está incompleto (sigue llegando en partes)
-                // No limpiamos mensajeEnPartes para que se concatene con el siguiente fragmento
+                buffer = ""; // Limpiar si falla el parseo
               }
             }
           },
         );
+
+        // --- CORRECCIÓN: Esperar 500ms y pedir los nodos ---
+        setTimeout(async () => {
+          const cmdNodes = JSON.stringify({ cmd: "nodes" });
+          const utf8String = unescape(encodeURIComponent(cmdNodes));
+          const base64Cmd = base64.encode(utf8String);
+
+          await connected.writeCharacteristicWithResponseForService(
+            "4fafc201-1fb5-459e-8fcc-c5c9c331914b",
+            "beb5483e-36e1-4688-b7f5-ea07361b26a8",
+            base64Cmd,
+          );
+        }, 500);
       }
     } catch (e) {
       console.error("Error al conectar:", e);
@@ -134,9 +139,8 @@ export default function HomeScreen() {
       if (!mensajeGuardado || mensajeGuardado.trim() === "") return;
 
       const payload = {
-        cmd: "send",
+        cmd: "broadcast",
         text: mensajeGuardado,
-        to: "broadcast",
         sos: false,
       };
       const utf8String = unescape(encodeURIComponent(JSON.stringify(payload)));
